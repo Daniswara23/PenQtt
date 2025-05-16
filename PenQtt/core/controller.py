@@ -109,6 +109,19 @@ def run_cli_controller():
                                 password=brute_force_credentials["password"]
                             )
 
+                        else : 
+                            brute_force_credentials["wordlist_fail"] = True
+                            print(f"{Fore.YELLOW}wordlist gagal !, silahkan masukkan username dan password yang benar {Style.RESET_ALL}")
+                            brute_force_credentials["username"]= input("username :")
+                            brute_force_credentials["password"]= input("password :")
+                            brute_force_credentials["from_input"] = True
+                            mqtt_enum.mqtt_enum_broker(
+                                broker_ip,
+                                username=brute_force_credentials["username"],
+                                password=brute_force_credentials["password"]
+                            )
+                            
+
                 if sniffed_topics:
                     print(f"{Fore.GREEN}[+] Hasil Topik MQTT yang di-sniffing:{Style.RESET_ALL}")
                     for topic in sniffed_topics:

@@ -2,7 +2,7 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from datetime import datetime
 from colorama import Fore,Style
-
+from core.global_state import brute_force_credentials
 
 def generate_pdf_report(broker_ip, username, password, topics, fuzz_count, flood_info, qos_delay_summary):
     filename = f"report_{broker_ip.replace('.', '_')}.pdf"
@@ -29,6 +29,8 @@ def generate_pdf_report(broker_ip, username, password, topics, fuzz_count, flood
     c.drawString(60, y, f"Username: {username or 'N/A'}")
     y -= 15
     c.drawString(60, y, f"Password: {password or 'N/A'}")
+    if brute_force_credentials["wordlist_fail"]:
+        c.drawString(50, y - 20, "Catatan: Wordlist gagal, kredensial dimasukkan manual oleh pengguna.")
 
     # ==== HASIL SNIFF TOPIK ====
     y -= 30
