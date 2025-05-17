@@ -15,4 +15,6 @@ Aplikasi ini bertujuan untuk melakukan uji pentest mandiri ke perangkat IoT kali
 
 Sekian, dan selamat menikmati
 
-P.S : Aplikasi ini sudah diuji keamanan penggunannya, dan segala kerusakan terhadap perangkat yang diuji akibat diubahnya kode bukan tanggung jawab pembuat. 
+P.S : 
+Anda dapat menambahkan username dan password yang ingin dijadika wordlist pada Penmqtt/assest/wordlist.txt dengan format username:password
+Aplikasi ini sudah diuji keamanan penggunannya, dan segala kerusakan terhadap perangkat yang diuji akibat diubahnya kode bukan tanggung jawab pembuat. 
