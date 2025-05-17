@@ -1,0 +1,6 @@
+123456:raspiuser
+12345:raspiuser
+password:raspiuser
+iloveyou:raspiuser
+rapiuser:raspiuser
+princess:raspiuser
