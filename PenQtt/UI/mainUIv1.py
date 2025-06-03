@@ -1,17 +1,59 @@
+import os
 import sys
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QLabel, QPushButton, QLineEdit, QFrame, QTableWidget, 
-                             QTableWidgetItem, QScrollArea, QTextEdit, QStackedWidget,
-                             QMessageBox, QDialog, QGroupBox, QCheckBox, QComboBox)
-from PySide6.QtCore import Qt, QSize, QEvent
-from PySide6.QtGui import QFont, QColor
 import threading
+import sqlite3
+
+# Tambahkan parent folder ke path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+# PySide6 Core
+from PySide6.QtCore import (
+    Qt, QSize, QEvent, QTimer, QThread, Signal, QObject, QMetaObject, Q_ARG
+)
+
+# PySide6 Widgets
+from PySide6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QLineEdit, QFrame, QTableWidget,
+    QTableWidgetItem, QScrollArea, QTextEdit, QStackedWidget,
+    QMessageBox, QDialog, QGroupBox, QCheckBox, QComboBox
+)
+
+# PySide6 GUI
+from PySide6.QtGui import QFont, QColor
+
+# Ekstensi
+from functools import partial
 from wifiget import get_network_name
-from network_scanner import NetworkScanner
+
+# Core modules (local imports)
+from core.controller import PenTestController
+from core.sniffer import Sniffer
+from core.network_scanner import NetworkScanner
+from core.brute_force import BruteForcer
+from core.dos_flodder import DoSFlooder
+from core.mqtt_enum import MQTTEnumerator
+from core.fuzzer import Fuzzer
+from core.qos_delay import QoSTester
+from core.report import ReportGenerator
+
+
+def safe_set_label_text(label, text):
+    QMetaObject.invokeMethod(label, "setText", Qt.QueuedConnection, Q_ARG(str, text))
+
+def safe_append_text(textedit, text):
+    def append():
+        textedit.append(text)
+        textedit.verticalScrollBar().setValue(textedit.verticalScrollBar().maximum())
+    QMetaObject.invokeMethod(textedit, "append", Qt.QueuedConnection, Q_ARG(str, text))
 
 class PenMQTT(QMainWindow):
     def __init__(self):
         super().__init__()
+        # Active Worker Threads
+        self._active_threads = []
+        self._active_workers = []
+
         self.setWindowTitle("PenMQTT")
         self.resize(1920, 1080)  # Set window size to 1920x1080
         self.setStyleSheet("""
@@ -73,18 +115,10 @@ class PenMQTT(QMainWindow):
             QTextEdit {
                 color: black;
             }
-            QPushButton#testReportButton {
-            background-color: #FF7F50;
-            border-radius: 5px;
-            color: white;
-            font-weight: bold;
-            padding: 5px 10px;
-        }
         """)
         
         # Initialize NetworkScanner
         self.network_scanner = NetworkScanner()
-        
         # Initialize device tracking
         self.device_buttons = []
         self.current_device = None
@@ -131,6 +165,7 @@ class PenMQTT(QMainWindow):
         # Devices list container
         self.devices_frame = QFrame()
         self.devices_frame.setFrameShape(QFrame.StyledPanel)
+        self.devices_frame.setStyleSheet("background-color: white;")
         self.devices_layout = QVBoxLayout(self.devices_frame)
         
         # Add a scroll area for devices
@@ -261,11 +296,16 @@ class PenMQTT(QMainWindow):
         self.status_info.setStyleSheet("color: black;")
         report_header_layout.addWidget(self.status_info)
         
-        generate_report = QPushButton("Generate Report")
-        generate_report.setObjectName("reportButton")
-        generate_report.clicked.connect(self.generate_report)
-        report_header_layout.addWidget(generate_report)
-        
+        # generate_report = QPushButton("Generate Report")
+        # generate_report.setObjectName("reportButton")
+        # generate_report.clicked.connect(self.generate_report)
+        # report_header_layout.addWidget(generate_report)
+
+        # auto_test_button = QPushButton("Run Full Pentest")
+        # auto_test_button.setObjectName("testReportButton")
+        # # auto_test_button.clicked.connect(self.run_full_pentest_ui)
+        # report_header_layout.addWidget(auto_test_button)
+
         report_content_layout.addLayout(report_header_layout)
         
         self.attack_type_label = QLabel("")
@@ -275,6 +315,7 @@ class PenMQTT(QMainWindow):
         self.report_text = QTextEdit()
         self.report_text.setReadOnly(True)
         self.report_text.setStyleSheet("color: black;")
+        self.report_text.setStyleSheet("color: black;background-color: white;")
         report_content_layout.addWidget(self.report_text)
         
         self.report_stack.addWidget(self.report_widget)
@@ -302,6 +343,9 @@ class PenMQTT(QMainWindow):
         self.log_table.setColumnWidth(3, 400)  # Increased width
         self.log_table.setColumnWidth(4, 100)  # Increased width
 
+        # Connect a row click event to a handler
+        self.log_table.cellClicked.connect(self.handle_log_selection) # Tambahan 22.53
+
         # Make the table take more space
         section4_layout.addWidget(self.log_table)
         right_layout.addWidget(section4, 3)  # Increased stretch factor to 3
@@ -312,8 +356,23 @@ class PenMQTT(QMainWindow):
         
         # Connect signals
         scan_button.clicked.connect(self.scan_network)
-        enter_button.clicked.connect(self.enter_credentials)
+        enter_button.clicked.connect(self.prompt_manual_credentials)
+        self.pentest_running = False
         
+    def handle_log_selection(self, row, column):  # def ini  juga Tambahan baru
+        device_name = self.log_table.item(row, 0).text()
+        timestamp = self.log_table.item(row, 1).text()
+        subject = self.log_table.item(row, 2).text()
+        description = self.log_table.item(row, 3).text()
+        status = self.log_table.item(row, 4).text()
+
+        # You can update Section 3 widgets based on this info
+        self.device_info_label.setText(f"{device_name} @ {timestamp}")
+        self.status_info.setText(status)
+        self.attack_type_label.setText(subject)
+        self.report_text.setText(f"Log Detail:\n\n{description}")
+        self.report_stack.setCurrentIndex(1)
+
     def scan_network(self):
         """Start a network scan"""
         # Update network info
@@ -431,31 +490,18 @@ class PenMQTT(QMainWindow):
         # Force UI update
         QApplication.processEvents()
         
-    def select_device(self, device):
-        self.current_device = device
-        
-        # Update UI to show selected device
-        self.device_info_label.setText(f"{device['name']} ({device['ip']}) - {device['mac']}")
-        
-        # Get detailed device info
-        self.status_info.setText("Scanning...")
-        self.attack_type_label.setText("Device Information")
-        self.report_text.setText("Gathering detailed information about this device...")
-        self.report_stack.setCurrentIndex(1)  # Show the report content
-        
-        # Start detailed scan
-        self.network_scanner.get_device_details(device['ip'], callback=self.update_device_details)
-        
-        if not hasattr(self, 'automated_status_running') or not self.automated_status_running:
-            self.start_automated_status_cycle()
 
-        # Add log entry
-        self.add_log_entry(device['name'], "Information", f"Device selected: {device['ip']}", "Succeed")
+    def append_to_report_text(self, message):
+        safe_append_text(self.report_text, str(message))
+        self.report_text.verticalScrollBar().setValue(
+            self.report_text.verticalScrollBar().maximum()
+        )
+        QApplication.processEvents()
     
     def update_device_details(self, details):
         if not details:
             self.report_text.setText("Error fetching device details.")
-            self.status_info.setText("Failed")
+            safe_set_label_text(self.status_info, "Failed")
             return
         
         # Format and display device details
@@ -481,7 +527,7 @@ class PenMQTT(QMainWindow):
             text += "No open ports detected."
         
         self.report_text.setText(text)
-        self.status_info.setText("Succeed")
+        safe_set_label_text(self.status_info, "Succeed")
         
         # Add log entry
         self.add_log_entry(self.current_device['name'], "Device Info", f"Scanned {details['ip']}", "Succeed")
@@ -544,18 +590,18 @@ class PenMQTT(QMainWindow):
         # Update report text if a device is selected
         if hasattr(self, 'current_device') and self.current_device is not None:
             self.attack_type_label.setText(current_status)
-            self.status_info.setText("Running...")
-            self.report_text.append(f"Running {current_status} scan...\n")
+            safe_set_label_text(self.status_info, "Running...")
+            safe_append_text(self.report_text, f"Running {current_status} scan...\n")
             
             # Add some simulated output based on the status type
             if current_status == "BruteForce":
-                self.report_text.append("Testing common credentials...\n")
+                safe_append_text(self.report_text, "Testing common credentials...\n")
             elif current_status == "DoS":
-                self.report_text.append("Testing response under load...\n")
+                safe_append_text(self.report_text, "Testing response under load...\n")
             elif current_status == "Sniffing":
-                self.report_text.append("Capturing network traffic...\n")
+                safe_append_text(self.report_text, "Capturing network traffic...\n")
             elif current_status == "Fuzzing":
-                self.report_text.append("Testing input validation...\n")
+                safe_append_text(self.report_text, "Testing input validation...\n")
             
             # Scroll to bottom
             self.report_text.verticalScrollBar().setValue(
@@ -618,11 +664,11 @@ class PenMQTT(QMainWindow):
     
         # Update UI
         self.attack_type_label.setText(attack_type)
-        self.status_info.setText("Running...")
+        safe_set_label_text(self.status_info, "Running...")
         
         # Clear existing report
         self.report_text.clear()
-        self.report_text.append(f"Running {attack_type} attack on {self.current_device['ip']}...\n\n")
+        safe_append_text(self.report_text, f"Running {attack_type} attack on {self.current_device['ip']}...\n\n")
         
         # Get credentials if entered
         username = self.id_input.text() if self.id_input.text() != "DeviceID" else None
@@ -631,7 +677,7 @@ class PenMQTT(QMainWindow):
         # For now, we'll just add a placeholder message
         # This will be replaced with actual implementations for each attack type later
         self._update_attack_report(f"Simulating {attack_type} attack. Actual functionality will be implemented later.")
-        self.status_info.setText("Succeed")
+        safe_set_label_text(self.status_info, "Succeed")
         
         # Add log entry
         self.add_log_entry(
@@ -643,7 +689,7 @@ class PenMQTT(QMainWindow):
         
     def _update_attack_report(self, message):
         """Update the attack report with a new message"""
-        self.report_text.append(message)
+        safe_append_text(self.report_text, message)
         # Scroll to the bottom
         self.report_text.verticalScrollBar().setValue(
             self.report_text.verticalScrollBar().maximum()
@@ -683,25 +729,54 @@ class PenMQTT(QMainWindow):
             
             QMessageBox.information(self, "Report Generated", 
                                 f"Report has been generated and saved as:\n{report_location}/{report_name}")
-    
-    def enter_credentials(self):
+
+    def prompt_manual_credentials(self, require_prompt=False, broker_ip=None, enum=None):
         if not hasattr(self, 'current_device') or self.current_device is None:
             QMessageBox.warning(self, "No Device Selected", "Please select a device first.")
             return
-            
-        username = self.id_input.text()
-        password = self.pass_input.text()
-        
-        # Add log entry
-        self.add_log_entry(
-            self.current_device['name'],
-            "Credentials",
-            f"Entered credentials for {self.current_device['ip']}",
-            "Succeed"
-        )
-        
-        QMessageBox.information(self, "Credentials Entered", 
-                               f"Credentials entered for {self.current_device['name']}:\nUsername: {username}")
+
+        if require_prompt:
+            result = QMessageBox.question(
+                self,
+                "Input Manual Dibutuhkan",
+                "Brute force gagal.\nApakah Anda ingin melanjutkan dengan kredensial manual dari input form?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if result != QMessageBox.Yes:
+                self._update_attack_report("[!] Pengguna membatalkan pentest.\n")
+                self.stop_automated_status_cycle()
+                return
+
+        username = self.id_input.text().strip()
+        password = self.pass_input.text().strip()
+
+        if username and password:
+            self.manual_credentials = (username, password)
+            self._update_attack_report(f"[✓] Menggunakan input manual: {username}:{password}\n")
+
+            if broker_ip and enum:
+                topics = enum.enum(broker_ip, username, password)
+                self.controller.topics = topics
+
+            self.add_log_entry(
+                self.current_device['name'],
+                "Credentials",
+                f"Entered credentials for {self.current_device['ip']}",
+                "Succeed"
+            )
+
+            if not require_prompt:
+                QMessageBox.information(self, "Credentials Entered", 
+                                    f"Credentials entered for {self.current_device['name']}:\nUsername: {username}")
+
+            # Tambahan penting ini:
+            if hasattr(self, 'pentest_worker'):
+                self.pentest_worker.manual_credentials = (username, password)
+                self.pentest_worker.run()
+        else:
+            self._update_attack_report("[!] Input manual belum diisi. Batalkan pentest.\n")
+            self.stop_automated_status_cycle()
+
     
     def add_log_entry(self, device, subject, description, status):
         from datetime import datetime
@@ -740,98 +815,327 @@ class PenMQTT(QMainWindow):
         # Scroll to the newest entry
         self.log_table.scrollToBottom()
 
-class ReportGenerationDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Generate Report")
-        self.setMinimumWidth(500)
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f0f0f0;
-            }
-            QLabel {
-                font-size: 14px;
-                color: black;
-            }
-            QPushButton {
-                background-color: white;
-                border-radius: 5px;
-                padding: 5px;
-                font-size: 14px;
-                color: black;
-            }
-            QPushButton#saveButton {
-                background-color: #90ee90;
-                color: black;
-            }
-            QPushButton#cancelButton {
-                background-color: #f0f0f0;
-                color: black;
-            }
-            QLineEdit {
-                border: 1px solid gray;
-                border-radius: 5px;
-                padding: 4px;
-                color: black;
-            }
+    def _conditional_delete_worker(self, worker):
+        if not getattr(worker, "waiting_for_manual", False):
+            worker.deleteLater()
+            if worker in self._active_workers:
+                self._active_workers.remove(worker)
+
+            if hasattr(self, 'pentest_thread') and self.pentest_thread in self._active_threads:
+                self._active_threads.remove(self.pentest_thread)
+
+
+
+    def select_device(self, device):
+        if self.pentest_running:
+            QMessageBox.warning(self, "Proses Sedang Berjalan", "Pentest masih berlangsung.")
+            return
+
+        self.pentest_running = True
+        self.current_device = device
+        self.device_info_label.setText(f"{device['name']} ({device['ip']}) - {device['mac']}")
+        safe_set_label_text(self.status_info, "Scanning...")
+        self.attack_type_label.setText("Device Information")
+        self.report_text.setText("Gathering detailed information about this device...")
+        self.report_stack.setCurrentIndex(1)
+
+        self.network_scanner.get_device_details(device['ip'], callback=self.update_device_details)
+        self.add_log_entry(device['name'], "Information", f"Device selected: {device['ip']}", "Succeed")
+
+        from PySide6.QtCore import QThread
+        self.pentest_thread = QThread()
+        self.pentest_worker = PentestWorker(device['ip'], device['name'])
+        self.pentest_worker.moveToThread(self.pentest_thread)
+
+        # Hubungkan signals ke UI
+        self.pentest_worker.log.connect(self.append_to_report_text)
+        self.pentest_worker.status.connect(lambda s: safe_set_label_text(self.status_info, s))
+        self.pentest_worker.done.connect(self._on_pentest_finished)
+        self.pentest_worker.need_manual_credentials.connect(self.prompt_manual_credentials)
+        self.pentest_worker.log_entry.connect(self.add_log_entry) # Tambahan baru 22.19
+
+        self.pentest_thread.started.connect(self.pentest_worker.run)
+        self.pentest_worker.finished.connect(self.pentest_thread.quit)
+        self.pentest_worker.finished.connect(self.pentest_worker.deleteLater)
+        self.pentest_thread.finished.connect(self.pentest_thread.deleteLater)
+
+        self.pentest_thread.start()
+
+    def _on_pentest_finished(self, ip, device_name, status):
+        self.add_log_entry(device_name, "Pentest", f"Pentest selesai untuk {ip}", status)
+        self.stop_automated_status_cycle()
+        self.pentest_running = False
+
+import sqlite3
+from datetime import datetime
+
+class ReportDatabase:
+    DB_FILE = "pentest_reports.db"
+
+    @staticmethod
+    def init_db():
+        conn = sqlite3.connect(ReportDatabase.DB_FILE)
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS report_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                target TEXT,
+                pdf_data BLOB
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def save_report(target_ip, pdf_path):
+        with open(pdf_path, 'rb') as f:
+            pdf_blob = f.read()
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn = sqlite3.connect(ReportDatabase.DB_FILE)
+        c = conn.cursor()
+        c.execute('''
+            INSERT INTO report_logs (timestamp, target, pdf_data)
+            VALUES (?, ?, ?)
+        ''', (timestamp, target_ip, pdf_blob))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def export_report(report_id, save_path):
+        conn = sqlite3.connect(ReportDatabase.DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT pdf_data FROM report_logs WHERE id = ?", (report_id,))
+        row = c.fetchone()
+        conn.close()
+        if row:
+            with open(save_path, 'wb') as f:
+                f.write(row[0])
+            return True
+        return False
+
+
+class PentestWorker(QObject):
+    log = Signal(str)
+    status = Signal(str)
+    finished = Signal()
+    done = Signal(str, str, str)  # ip, device_name, status
+    need_manual_credentials = Signal(str, object)
+    continue_signal = Signal()
+    log_entry = Signal(str, str, str, str) #Tambahan baru 22.18
+
+    def __init__(self, ip, device_name):
+        super().__init__()
+        self.ip = ip
+        self.device_name = device_name
+        self.manual_credentials = None
+        self.continue_signal.connect(self.run)
+        ReportDatabase.init_db()
+
+
+
+
+    def run(self):
+        try:
+            self.log.emit("Menjalankan pentest bertahap...\n")
+            self.status.emit("Running...")
+
+            # Jika sedang menunggu manual input, gunakan kredensial yang telah diberikan
+            if getattr(self, "waiting_for_manual", False):
+                self.waiting_for_manual = False
+                username, password = self.manual_credentials
+                broker_ip = self.broker_ip
+                enum = self.enum
+                self.log.emit(f"[✓] Melanjutkan dengan input manual: {username}:{password}\n")
+                credentials = (username, password)
+                topics = enum.enum(broker_ip, username, password)
+
+            else:
+                # Mulai proses dari awal
+                scanner = NetworkScanner()
+                interface = scanner.interface
+                sniffer = Sniffer(interface)
+                broker_list = sniffer.sniff_broker_from_iot(self.ip)
+                if not broker_list:
+                    self.log.emit("[!] Broker MQTT tidak ditemukan.\n")
+                    self.done.emit(self.ip, self.device_name, "Failed")
+                    self.finished.emit()
+                    return
+
+                broker_ip = broker_list[0]
+                self.log.emit(f"[✓] Broker ditemukan: {broker_ip}\n")
+
+                enum = MQTTEnumerator(logger=lambda msg: self.log.emit(msg))
+                topics = enum.enum(broker_ip)
+                credentials = None
+
+                if not topics:
+                    self.log.emit("➤ Jalankan brute force...\n")
+                    bruter = BruteForcer(logger=lambda msg: self.log.emit(msg))
+                    creds = bruter.brute_force(broker_ip)
+                    if creds:
+                        credentials = creds
+                        self.log.emit(f"[✓] Kredensial ditemukan: {creds[0]}:{creds[1]}\n")
+                        topics = enum.enum(broker_ip, creds[0], creds[1])
+                        self.log_entry.emit(self.device_name, "BruteFOrce", f"Kredensial: {creds[0]}:{creds[1]}", "Succeed") # Tambahan 22.28
+                    else:
+                        self.log.emit("[!] Gagal brute force. Menunggu input manual...\n")
+                        self.enum = enum
+                        self.broker_ip = broker_ip
+                        self.waiting_for_manual = True
+                        self.need_manual_credentials.emit(broker_ip, enum)
+                        self.log_entry.emit(self.device_name, "BruteFOrce", f"Device selected: {self.ip}", "Failed") # Tambahan 22.28
+                        return
+                else:
+                    credentials = (None, None)
+
+            self.log.emit("➤ Jalankan Fuzzing...\n")
+            fuzzer = Fuzzer(broker_ip, *credentials, logger=lambda msg: self.log.emit(msg))
+            fuzzer.run(topics)
+            # self.add_log_entry(device['name'], "Information", f"Device selected: {device['ip']}", "Succeed")
+            self.log_entry.emit(self.device_name, "Fuzzing", f"Device selected: {self.ip}", "Succeed") # Tambahan 22.25
+
+
+            self.log.emit("➤ Uji Delay QoS...\n")
+            qos = QoSTester(broker_ip, *credentials, logger=lambda msg: self.log.emit(msg))
+            qos_summary = qos.run()
+            self.log_entry.emit(self.device_name, "QoS", f"Device selected: {self.ip}", "Succeed") # Tambahan 22.28
+
+            # self.log.emit("➤ Jalankan Subscribe Flood (DoS)...\n")
+            # dos = DoSFlooder(broker_ip, *credentials, logger=lambda msg: self.log.emit(msg))
+            # dos.run()
+
+            self.log.emit("➤ Membuat laporan...\n")
+            
+
+            # Tentukan path
+            report_path = f"report_{broker_ip.replace('.', '_')}.pdf"
+
+            # Buat dan generate PDF
+            report = ReportGenerator(report_path)
+            report.generate(
+                broker_ip=broker_ip,
+                username=credentials[0],
+                password=credentials[1],
+                topics=topics,
+                fuzz_count=20,
+                flood_info={"topic_count": "1000", "messages_per_topic": "3000"},
+                qos_delay_summary=qos_summary
+            )
+
+            # Simpan ke database
+            ReportDatabase.save_report(broker_ip, report_path)
+
+
+            self.status.emit("Succeed")
+            self.log.emit("[✓] Pentest selesai. Laporan telah dibuat.\n")
+            self.done.emit(self.ip, self.device_name, "Succeed")
+            self.log_entry.emit(self.device_name, "Report Generated", f"Report Saved at {report_path}", "Succeed") # Tambahan 22.35
+
+        except Exception as e:
+            self.log.emit(f"[ERROR] {str(e)}")
+            self.done.emit(self.ip, self.device_name, "Failed")
+
+       
+        self.finished.emit()
+
         
-        """)
+
+
+
+# class ReportGenerationDialog(QDialog):
+#     def __init__(self, parent=None):
+#         super().__init__(parent)
+#         self.setWindowTitle("Generate Report")
+#         self.setMinimumWidth(500)
+#         self.setStyleSheet("""
+#             QDialog {
+#                 background-color: #f0f0f0;
+#             }
+#             QLabel {
+#                 font-size: 14px;
+#                 color: black;
+#             }
+#             QPushButton {
+#                 background-color: white;
+#                 border-radius: 5px;
+#                 padding: 5px;
+#                 font-size: 14px;
+#                 color: black;
+#             }
+#             QPushButton#saveButton {
+#                 background-color: #90ee90;
+#                 color: black;
+#             }
+#             QPushButton#cancelButton {
+#                 background-color: #f0f0f0;
+#                 color: black;
+#             }
+#             QLineEdit {
+#                 border: 1px solid gray;
+#                 border-radius: 5px;
+#                 padding: 4px;
+#                 color: black;
+#             }
         
-        self.setup_ui()
+#         """)
+        
+#         self.setup_ui()
     
-    def setup_ui(self):
-        layout = QVBoxLayout(self)
+#     def setup_ui(self):
+#         layout = QVBoxLayout(self)
         
-        # Report name section
-        name_layout = QHBoxLayout()
-        name_label = QLabel("Report Name:")
-        self.name_input = QLineEdit("PenMQTT_Report")
-        name_layout.addWidget(name_label)
-        name_layout.addWidget(self.name_input)
-        layout.addLayout(name_layout)
+#         # Report name section
+#         name_layout = QHBoxLayout()
+#         name_label = QLabel("Report Name:")
+#         self.name_input = QLineEdit("PenMQTT_Report")
+#         name_layout.addWidget(name_label)
+#         name_layout.addWidget(self.name_input)
+#         layout.addLayout(name_layout)
         
-        # Report location section
-        location_layout = QHBoxLayout()
-        location_label = QLabel("Location:")
-        self.location_input = QLineEdit("/home/user/documents")
-        browse_button = QPushButton("Browse...")
-        browse_button.clicked.connect(self.browse_location)
-        location_layout.addWidget(location_label)
-        location_layout.addWidget(self.location_input)
-        location_layout.addWidget(browse_button)
-        layout.addLayout(location_layout)
+#         # Report location section
+#         location_layout = QHBoxLayout()
+#         location_label = QLabel("Location:")
+#         self.location_input = QLineEdit("/home/user/documents")
+#         browse_button = QPushButton("Browse...")
+#         browse_button.clicked.connect(self.browse_location)
+#         location_layout.addWidget(location_label)
+#         location_layout.addWidget(self.location_input)
+#         location_layout.addWidget(browse_button)
+#         layout.addLayout(location_layout)
         
-        # Report format section - just a label showing PDF format
-        format_layout = QHBoxLayout()
-        format_label = QLabel("Format:")
-        format_value = QLabel("PDF (.pdf)")
-        # Store the format value for reference when saving
-        self.format_combo = QLabel("PDF (.pdf)")
-        self.format_combo.setVisible(False)  # Hide but keep for compatibility
-        format_layout.addWidget(format_label)
-        format_layout.addWidget(format_value)
-        layout.addLayout(format_layout)
+#         # Report format section - just a label showing PDF format
+#         format_layout = QHBoxLayout()
+#         format_label = QLabel("Format:")
+#         format_value = QLabel("PDF (.pdf)")
+#         # Store the format value for reference when saving
+#         self.format_combo = QLabel("PDF (.pdf)")
+#         self.format_combo.setVisible(False)  # Hide but keep for compatibility
+#         format_layout.addWidget(format_label)
+#         format_layout.addWidget(format_value)
+#         layout.addLayout(format_layout)
         
-        # Buttons section
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addStretch()
+#         # Buttons section
+#         buttons_layout = QHBoxLayout()
+#         buttons_layout.addStretch()
         
-        cancel_button = QPushButton("Cancel")
-        cancel_button.setObjectName("cancelButton")
-        cancel_button.clicked.connect(self.reject)
+#         cancel_button = QPushButton("Cancel")
+#         cancel_button.setObjectName("cancelButton")
+#         cancel_button.clicked.connect(self.reject)
         
-        save_button = QPushButton("Save Report")
-        save_button.setObjectName("saveButton")
-        save_button.clicked.connect(self.accept)
+#         save_button = QPushButton("Save Report")
+#         save_button.setObjectName("saveButton")
+#         save_button.clicked.connect(self.accept)
         
-        buttons_layout.addWidget(cancel_button)
-        buttons_layout.addWidget(save_button)
-        layout.addLayout(buttons_layout)
+#         buttons_layout.addWidget(cancel_button)
+#         buttons_layout.addWidget(save_button)
+#         layout.addLayout(buttons_layout)
     
-    def browse_location(self):
-        # This would open a file dialog to select directory
-        # We'll just simulate it for now
-        pass
+#     def browse_location(self):
+#         # This would open a file dialog to select directory
+#         # We'll just simulate it for now
+#         pass
 
 def main():
     app = QApplication(sys.argv)
