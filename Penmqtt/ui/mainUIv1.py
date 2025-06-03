@@ -1002,10 +1002,11 @@ class PentestWorker(QObject):
             qos_summary = qos.run()
             self.log_entry.emit(self.device_name, "QoS", f"Device selected: {self.ip}", "Succeed") # Tambahan 22.28
 
-            # self.log.emit("➤ Jalankan Subscribe Flood (DoS)...\n")
-            # dos = DoSFlooder(broker_ip, *credentials, logger=lambda msg: self.log.emit(msg))
-            # dos.run()
-
+            self.log.emit("➤ Jalankan Subscribe Flood (DoS)...\n")
+            dos = DoSFlooder(broker_ip, *credentials, logger=lambda msg: self.log.emit(msg))
+            dos.run()
+            self.log_entry.emit(self.device_name, "DoS", f"Device selected: {self.ip}", "Succeed") # Tambahan 22.28
+            
             self.log.emit("➤ Membuat laporan...\n")
             
 
