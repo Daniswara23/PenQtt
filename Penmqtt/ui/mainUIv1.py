@@ -384,7 +384,7 @@ class PenMQTT(QMainWindow):
         # Show scanning message with a specific object name so we can find it later
         scanning_label = QLabel("Scanning network...")
         scanning_label.setObjectName("scanningLabel")
-        scanning_label.setStyleSheet("color: white;")
+        scanning_label.setStyleSheet("color: black;")
         self.devices_layout.addWidget(scanning_label)
         QApplication.processEvents()  # Force UI update
         
