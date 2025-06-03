@@ -3,7 +3,7 @@ Halo semuanya kalian mantap, ini merupakan aplikasi buatan mahasiswa telkom yait
 
 -Arkan Fayiz Naharuddin (1103213164)
 
--Kevin Olind Hasudungan N. ()
+-Kevin Olind Hasudungan N. (1103210140)
 
 -Satya Athaya Daniswara (1103213152)
 
