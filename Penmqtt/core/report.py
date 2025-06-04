@@ -26,12 +26,15 @@ class ReportGenerator:
         self.log("[Report] Menambahkan statistik...")
         c.drawString(50, height - 170, "Topik yang Disadap:")
         y = height - 190
-        for t in list(topics)[:10]:
-            c.drawString(70, y, f"- {t}")
-            y -= 15
-            if y < 100:
-                c.showPage()
-                y = height - 50
+        for topic, payload in self.sniffed_topics.items():/
+            c.drawString(70, y, f"- {topic} → {payload}")
+
+        # for t in list(topics)[:10]:
+        #     c.drawString(70, y, f"- {t}")
+        #     y -= 15
+        #     if y < 100:
+        #         c.showPage()
+        #         y = height - 50
 
         c.drawString(50, y - 20, f"Jumlah Payload Fuzzing Dikirim: {fuzz_count}")
         y -= 40
