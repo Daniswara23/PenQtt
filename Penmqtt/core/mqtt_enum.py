@@ -2,12 +2,19 @@ import paho.mqtt.client as mqtt
 
 class MQTTEnumerator:
     def __init__(self, logger=None):
-        self.sniffed_topics = set()
+        self.sniffed_topics = {}
         self.logger = logger
 
     def log(self, message):
+        if message.startswith("[Sniffed] "):
+            try:
+                topic, payload = message[len("[Sniffed] "):].split(" => ", 1)
+            except ValueError:
+                topic, payload = message[len("[Sniffed] "):], "(payload tidak tersedia)"
+            self.sniffed_topics[topic] = payload
         if self.logger:
             self.logger(message)
+
 
     def enum(self, broker_ip, username=None, password=None, duration=30):
         def on_connect(client, userdata, flags, rc):
@@ -17,8 +24,11 @@ class MQTTEnumerator:
                 client.disconnect()
 
         def on_message(client, userdata, msg):
-            self.sniffed_topics.add(msg.topic)
-            self.log(f"[Sniffed] {msg.topic}")
+            topic = msg.topic
+            payload = msg.payload.decode(error="ignore")
+            self.log(f"[Sniffed] {topic} => {payload}")
+            #self.sniffed_topics.add(msg.topic)
+            #self.log(f"[Sniffed] {msg.topic}")
 
         client = mqtt.Client()
         if username and password:
